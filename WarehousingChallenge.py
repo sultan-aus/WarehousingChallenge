@@ -330,7 +330,7 @@ def plot_skus_per_zone_by_demand_level(assignments_df: pd.DataFrame,
     return fig
 
 
-def build_cooccurrence_graph(edges_df: pd.DataFrame):
+def build_cooccurrence_graph(edges_df: pd.DataFrame, sku_master: pd.DataFrame):
     if edges_df.empty:
         return go.Figure()
 
@@ -338,10 +338,13 @@ def build_cooccurrence_graph(edges_df: pd.DataFrame):
     for _, row in edges_df.iterrows():
         G.add_edge(row["source"], row["target"], weight=row["weight"])
 
+    # Get categories for coloring
+    sku_cat_map = sku_master.set_index("SKU_ID")["Category"].to_dict()
+    categories = sorted(list(set(sku_cat_map.values())))
+    color_map = {cat: i for i, cat in enumerate(categories)}
+    
     pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
-    x_nodes = [pos[node][0] for node in G.nodes()]
-    y_nodes = [pos[node][1] for node in G.nodes()]
-
+    
     edge_x = []
     edge_y = []
     for edge in G.edges():
@@ -356,22 +359,52 @@ def build_cooccurrence_graph(edges_df: pd.DataFrame):
         hoverinfo="none",
         mode="lines"
     )
+
+    node_x = []
+    node_y = []
+    node_text = []
+    node_color = []
+    
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        cat = sku_cat_map.get(node, "Unknown")
+        node_text.append(f"{node} ({cat})")
+        node_color.append(color_map.get(cat, -1))
+
     node_trace = go.Scatter(
-        x=x_nodes, y=y_nodes,
+        x=node_x, y=node_y,
         mode="markers+text",
         text=[node for node in G.nodes()],
         textposition="top center",
+        hovertext=node_text,
         hoverinfo="text",
-        marker=dict(size=12, line_width=1)
+        marker=dict(
+            showscale=True,
+            colorscale='Viridis',
+            reversescale=True,
+            color=node_color,
+            size=15,
+            colorbar=dict(
+                thickness=15,
+                title='Category Group',
+                xanchor='left',
+                titleside='right'
+            ),
+            line_width=2
+        )
     )
 
     fig = go.Figure(
         data=[edge_trace, node_trace],
         layout=go.Layout(
-            title="SKU Co-occurrence Network",
+            title="SKU Co-occurrence Network (Colored by Category)",
             showlegend=False,
             hovermode="closest",
             margin=dict(b=20, l=5, r=5, t=40),
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
         )
     )
     return fig
@@ -450,11 +483,19 @@ elif DEFAULT_LOCAL_DATASET.exists():
         st.sidebar.info(f"Using default local file: {DEFAULT_LOCAL_DATASET}")
     except Exception as e:
         st.sidebar.error(f"Error loading default local file: {e}")
-else:
-    st.warning(
-        "Please upload an Excel dataset, or place "
-        f"'Warehouse_Synthetic_Dataset_2025.xlsx' in your Downloads folder."
-    )
+
+# If no data loaded yet, show prompt in main area
+if orders_df is None:
+    st.title("Warehouse Activity Profiling Simulator")
+    st.info("👋 Welcome! Please upload your dataset in the sidebar to begin.")
+    st.markdown("""
+    ### Required Data Format
+    Your Excel file must contain the following sheets:
+    - **Orders**: Order-level data
+    - **Lines**: Order line-level data
+    - **SKU_Master**: SKU details (Category, Weight, Volume, etc.)
+    - **Storage_Zones**: Warehouse zone definitions
+    """)
     st.stop()
 
 # Validate relationships
@@ -613,7 +654,8 @@ with tab_analytics:
     if rules_df.empty:
         st.info("No association rules found with current thresholds.")
     else:
-        fig_graph = build_cooccurrence_graph(edges_df)
+        # Updated to pass sku_master_df for coloring
+        fig_graph = build_cooccurrence_graph(edges_df, sku_master_df)
         st.plotly_chart(fig_graph, use_container_width=True)
 
         st.markdown("Top Association Rules")
@@ -730,10 +772,22 @@ with tab_export:
                 )
                 .reset_index())
 
+    # Create comparison sheet for all scenarios
+    comp_rows = []
+    for s_name, s_data in st.session_state.scenarios.items():
+        m = s_data["metrics"]
+        comp_rows.append({
+            "Scenario": s_name,
+            "Total_Demand_Weighted_Distance": m["Total_Demand_Weighted_Distance"],
+            "Avg_Zone_Utilization": m["Avg_Zone_Utilization"]
+        })
+    comparison_df = pd.DataFrame(comp_rows)
+
     excel_bytes = to_excel_bytes({
+        "Summary_Report": summary_df,
+        "Scenario_Comparison": comparison_df,
         "SKU_Assignments": assignments,
         "Zone_Utilization": zones,
-        "Summary_Report": summary_df,
         "Category_Level_KPIs": cat_kpis
     })
 
