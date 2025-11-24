@@ -36,13 +36,38 @@ DEFAULT_LOCAL_DATASET = (
 
 # ========= CORE HELPERS =========
 
+REQUIRED_SCHEMA = {
+    "Orders": ["Order_ID"],
+    "Lines": ["Order_ID", "SKU_ID"],
+    "SKU_Master": ["SKU_ID", "Demand", "Weight_kg", "Volume_m3", "Storage_Type", "Category"],
+    "Storage_Zones": ["Zone_ID", "Storage_Type", "Capacity_m3", "Distance"]
+}
+
+def validate_schema(xls: pd.ExcelFile) -> List[str]:
+    errors = []
+    # Check sheets
+    missing_sheets = [s for s in REQUIRED_SCHEMA if s not in xls.sheet_names]
+    if missing_sheets:
+        errors.append(f"Missing required sheets: {', '.join(missing_sheets)}")
+    
+    # Check columns for existing sheets
+    for sheet, required_cols in REQUIRED_SCHEMA.items():
+        if sheet in xls.sheet_names:
+            df_cols = pd.read_excel(xls, sheet, nrows=0).columns.tolist()
+            missing_cols = [c for c in required_cols if c not in df_cols]
+            if missing_cols:
+                errors.append(f"Sheet '{sheet}' is missing columns: {', '.join(missing_cols)}")
+    
+    return errors
+
 def load_excel(file) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load Orders, Lines, SKU_Master, Storage_Zones from Excel file or file-like."""
     xls = pd.ExcelFile(file)
-    required_sheets = ["Orders", "Lines", "SKU_Master", "Storage_Zones"]
-    missing = [s for s in required_sheets if s not in xls.sheet_names]
-    if missing:
-        raise ValueError(f"Missing sheets: {missing}")
+    
+    # Run schema validation
+    schema_errors = validate_schema(xls)
+    if schema_errors:
+        raise ValueError("\n".join(schema_errors))
 
     orders = pd.read_excel(xls, "Orders")
     lines = pd.read_excel(xls, "Lines")
