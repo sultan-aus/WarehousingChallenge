@@ -415,7 +415,10 @@ if st.session_state.show_splash:
         )
     time.sleep(5)
     st.session_state.show_splash = False
-    st.experimental_rerun()
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
 
 
 # ========= SIDEBAR – DATA IMPORT & SCENARIOS =========
